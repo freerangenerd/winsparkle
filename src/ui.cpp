@@ -29,6 +29,7 @@
 #include "updatechecker.h"
 #include "updatedownloader.h"
 #include "appcontroller.h"
+#include <shellapi.h>
 
 #define wxNO_NET_LIB
 #define wxNO_XML_LIB
@@ -273,6 +274,7 @@ void WinSparkleDialog::SetHeadingFont(wxWindow *win)
 
 const int ID_SKIP_VERSION = wxNewId();
 const int ID_REMIND_LATER = wxNewId();
+const int ID_LEARN_MORE = wxNewId();
 const int ID_INSTALL = wxNewId();
 const int ID_RUN_INSTALLER = wxNewId();
 
@@ -287,8 +289,10 @@ public:
     void StateNoUpdateFound();
     // change state into "update error"
     void StateUpdateError();
-    // change state into "a new version is available"
+	// change state into "a new paid version is available"
     void StateUpdateAvailable(const Appcast& info);
+    // change state into "a new version is available"
+    void StatePaidUpdateAvailable(const Appcast& info);
     // change state into "downloading update"
     void StateDownloading();
     // update download progress
@@ -304,6 +308,7 @@ private:
 
     void OnSkipVersion(wxCommandEvent&);
     void OnRemindLater(wxCommandEvent&);
+	void OnLearnMore(wxCommandEvent&);
     void OnInstall(wxCommandEvent&);
 
     void OnRunInstaller(wxCommandEvent&);
@@ -324,6 +329,7 @@ private:
     wxSizer      *m_runInstallerButtonSizer;
     wxButton     *m_installButton;
     wxSizer      *m_updateButtonsSizer;
+	wxSizer		 *m_learnMoreButtonsSizer;
     wxSizer      *m_releaseNotesSizer;
     wxPanel      *m_browserParent;
 
@@ -404,6 +410,25 @@ UpdateDialog::UpdateDialog()
                           );
     m_buttonSizer->Add(m_updateButtonsSizer, wxSizerFlags(1));
 
+	m_learnMoreButtonsSizer = new wxBoxSizer(wxHORIZONTAL);
+    m_learnMoreButtonsSizer->Add
+                          (
+                            new wxButton(this, ID_SKIP_VERSION, _("Skip this version")),
+                            wxSizerFlags().Border(wxRIGHT, 20)
+                          );
+    m_learnMoreButtonsSizer->AddStretchSpacer(1);
+    m_learnMoreButtonsSizer->Add
+                          (
+                            new wxButton(this, ID_REMIND_LATER, _("Remind me later")),
+                            wxSizerFlags().Border(wxRIGHT, 10)
+                          );
+    m_learnMoreButtonsSizer->Add
+                          (
+                            m_installButton = new wxButton(this, ID_LEARN_MORE, _("Learn more")),
+                            wxSizerFlags()
+                          );
+	 m_buttonSizer->Add(m_learnMoreButtonsSizer, wxSizerFlags(1));
+
     m_closeButtonSizer = new wxBoxSizer(wxHORIZONTAL);
     m_closeButton = new wxButton(this, wxID_CANCEL);
     m_closeButtonSizer->AddStretchSpacer(1);
@@ -430,6 +455,7 @@ UpdateDialog::UpdateDialog()
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnCloseButton, this, wxID_CANCEL);
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnSkipVersion, this, ID_SKIP_VERSION);
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnRemindLater, this, ID_REMIND_LATER);
+	Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnLearnMore, this, ID_LEARN_MORE);
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnInstall, this, ID_INSTALL);
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &UpdateDialog::OnRunInstaller, this, ID_RUN_INSTALLER);
 }
@@ -475,7 +501,12 @@ void UpdateDialog::OnClose(wxCloseEvent&)
 
 void UpdateDialog::OnSkipVersion(wxCommandEvent&)
 {
-    Settings::WriteConfigValue("SkipThisVersion", m_appcast.Version);
+	if (m_appcast.IsPaidUpdate) {
+		Settings::WriteConfigValue("SkipThisPaidVersion", m_appcast.Version);
+	}
+	else {
+		Settings::WriteConfigValue("SkipThisVersion", m_appcast.Version);
+	}
     Close();
 }
 
@@ -485,6 +516,22 @@ void UpdateDialog::OnRemindLater(wxCommandEvent&)
     // Just abort the update. Next time it's scheduled to run,
     // the user will be prompted.
     Close();
+}
+
+void UpdateDialog::OnLearnMore(wxCommandEvent&)
+{
+	HINSTANCE r = ShellExecuteA(NULL, "open", m_appcast.DownloadURL.c_str(), NULL, NULL, SW_SHOWNORMAL);
+	if ((int)r <= 32)
+	{
+		// Error occurred
+		 wxLogError(_("Failed to open web page."));
+		wxMessageDialog dlg(this,
+                            _("An error prevented opening the upgrade web page in your default browser."),
+                            _("Software Update"),
+                            wxOK | wxOK_DEFAULT | wxICON_EXCLAMATION);
+        dlg.ShowModal();
+	}
+	Close();
 }
 
 
@@ -551,6 +598,7 @@ void UpdateDialog::StateCheckingUpdates()
     HIDE(m_runInstallerButtonSizer);
     HIDE(m_releaseNotesSizer);
     HIDE(m_updateButtonsSizer);
+	HIDE(m_learnMoreButtonsSizer);
     MakeResizable(false);
 }
 
@@ -590,6 +638,7 @@ void UpdateDialog::StateNoUpdateFound()
     HIDE(m_runInstallerButtonSizer);
     HIDE(m_releaseNotesSizer);
     HIDE(m_updateButtonsSizer);
+	HIDE(m_learnMoreButtonsSizer);
     MakeResizable(false);
 }
 
@@ -614,11 +663,64 @@ void UpdateDialog::StateUpdateError()
     HIDE(m_runInstallerButtonSizer);
     HIDE(m_releaseNotesSizer);
     HIDE(m_updateButtonsSizer);
+	HIDE(m_learnMoreButtonsSizer);
     MakeResizable(false);
 }
 
+void UpdateDialog::StatePaidUpdateAvailable(const Appcast& info)
+{
+    m_appcast = info;
 
+    const bool showRelnotes = !info.ReleaseNotesURL.empty() || !info.Description.empty();
 
+    {
+        LayoutChangesGuard guard(this);
+
+        const wxString appname = Settings::GetAppName();
+
+        wxString ver_my = Settings::GetAppVersion();
+        wxString ver_new = info.ShortVersionString;
+        if ( ver_new.empty() )
+            ver_new = info.Version;
+        if ( ver_my == ver_new )
+        {
+            ver_my = wxString::Format("%s (%s)", ver_my, Settings::GetAppBuildVersion());
+            ver_new = wxString::Format("%s (%s)", ver_new, info.Version);
+        }
+
+        m_heading->SetLabel(
+            wxString::Format(_("A new paid upgrade of %s is available!"), appname));
+
+        SetMessage
+        (
+            wxString::Format
+            (
+                _("%s %s is now available (you have %s). Would you like to learn more about it or purchase it now on the web?"),
+                appname, ver_new, ver_my
+            ),
+            showRelnotes ? RELNOTES_WIDTH : MESSAGE_AREA_WIDTH
+        );
+
+        EnablePulsing(false);
+
+        m_installButton->SetDefault();
+
+        SHOW(m_heading);
+        HIDE(m_progress);
+        HIDE(m_progressLabel);
+        HIDE(m_closeButtonSizer);
+        HIDE(m_runInstallerButtonSizer);
+        HIDE(m_updateButtonsSizer);
+		SHOW(m_learnMoreButtonsSizer);
+        DoShowElement(m_releaseNotesSizer, showRelnotes);
+        MakeResizable(showRelnotes);
+    }
+
+    // Only show the release notes now that the layout was updated, as it may
+    // take some time to load the MSIE control:
+    if ( showRelnotes )
+        ShowReleaseNotes(info);
+}
 void UpdateDialog::StateUpdateAvailable(const Appcast& info)
 {
     m_appcast = info;
@@ -663,6 +765,7 @@ void UpdateDialog::StateUpdateAvailable(const Appcast& info)
         HIDE(m_closeButtonSizer);
         HIDE(m_runInstallerButtonSizer);
         SHOW(m_updateButtonsSizer);
+		HIDE(m_learnMoreButtonsSizer);
         DoShowElement(m_releaseNotesSizer, showRelnotes);
         MakeResizable(showRelnotes);
     }
@@ -690,6 +793,7 @@ void UpdateDialog::StateDownloading()
     HIDE(m_runInstallerButtonSizer);
     HIDE(m_releaseNotesSizer);
     HIDE(m_updateButtonsSizer);
+	HIDE(m_learnMoreButtonsSizer);
     MakeResizable(false);
 }
 
@@ -748,6 +852,7 @@ void UpdateDialog::StateUpdateDownloaded(const std::string& updateFile)
     SHOW(m_runInstallerButtonSizer);
     HIDE(m_releaseNotesSizer);
     HIDE(m_updateButtonsSizer);
+	HIDE(m_learnMoreButtonsSizer);
     MakeResizable(false);
 }
 
@@ -908,6 +1013,9 @@ const int MSG_SHOW_CHECKING_UPDATES = wxNewId();
 const int MSG_NO_UPDATE_FOUND = wxNewId();
 
 // Notify the UI that a new version is available
+const int MSG_PAID_UPDATE_AVAILABLE = wxNewId();
+
+// Notify the UI that a new version is available
 const int MSG_UPDATE_AVAILABLE = wxNewId();
 
 // Notify the UI that a new version is available
@@ -943,6 +1051,7 @@ private:
     void OnTerminate(wxThreadEvent& event);
     void OnShowCheckingUpdates(wxThreadEvent& event);
     void OnNoUpdateFound(wxThreadEvent& event);
+	void OnPaidUpdateAvailable(wxThreadEvent& event);
     void OnUpdateAvailable(wxThreadEvent& event);
     void OnUpdateError(wxThreadEvent& event);
     void OnDownloadProgress(wxThreadEvent& event);
@@ -978,6 +1087,7 @@ App::App()
     Bind(wxEVT_COMMAND_THREAD, &App::OnTerminate, this, MSG_TERMINATE);
     Bind(wxEVT_COMMAND_THREAD, &App::OnShowCheckingUpdates, this, MSG_SHOW_CHECKING_UPDATES);
     Bind(wxEVT_COMMAND_THREAD, &App::OnNoUpdateFound, this, MSG_NO_UPDATE_FOUND);
+	Bind(wxEVT_COMMAND_THREAD, &App::OnPaidUpdateAvailable, this, MSG_PAID_UPDATE_AVAILABLE);
     Bind(wxEVT_COMMAND_THREAD, &App::OnUpdateAvailable, this, MSG_UPDATE_AVAILABLE);
     Bind(wxEVT_COMMAND_THREAD, &App::OnUpdateError, this, MSG_UPDATE_ERROR);
     Bind(wxEVT_COMMAND_THREAD, &App::OnDownloadProgress, this, MSG_DOWNLOAD_PROGRESS);
@@ -1067,6 +1177,17 @@ void App::OnUpdateDownloaded(wxThreadEvent& event)
         EventPayload payload(event.GetPayload<EventPayload>());
         m_win->StateUpdateDownloaded(payload.updateFile);
     }
+}
+
+
+void App::OnPaidUpdateAvailable(wxThreadEvent& event)
+{
+    InitWindow();
+
+    EventPayload payload(event.GetPayload<EventPayload>());
+    m_win->StatePaidUpdateAvailable(payload.appcast);
+
+    ShowWindow();
 }
 
 
@@ -1207,6 +1328,16 @@ void UI::NotifyNoUpdates()
         return;
 
     uit.App().SendMsg(MSG_NO_UPDATE_FOUND);
+}
+
+
+/*static*/
+void UI::NotifyPaidUpdateAvailable(const Appcast& info)
+{
+    UIThreadAccess uit;
+    EventPayload payload;
+    payload.appcast = info;
+    uit.App().SendMsg(MSG_PAID_UPDATE_AVAILABLE, &payload);
 }
 
 

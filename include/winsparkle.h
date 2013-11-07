@@ -133,6 +133,26 @@ WIN_SPARKLE_API void __cdecl win_sparkle_set_app_details(const wchar_t *company_
                                                          const wchar_t *app_version);
 
 /**
+    Set the preferred locale for release notes.
+
+	By default, WinSparkle will display the release notes from the link in the appcast file specified by the
+	tag <sparkle:releaseNotesLink> with no xml:lang attribute or with the attribute xml:lang="en".
+
+	Optionally, the host can tell WinSparkle the country code of the locale it prefers
+	using this method. If a <sparkle:releaseNotesLink> tag is found with a lang attribute matching
+	the preferred locale, the release notes displayed will be drawn from the url value specified for that tag.
+	If the matching attribute is not found, WinSparkle will revert to its default behavior.
+	This differs from the Mac Sparkle implementation, which used xml:lang to specifiy the attribute.
+	This change was made because of the use of expat, which has a bug parsing that attrbute.
+
+	See <http://www.iso.org/iso/country_codes/iso_3166_code_lists/country_names_and_code_elements.htm> for
+	a list of country codes.
+
+	@param country_code		Country code of the locale the host prefers 
+*/
+WIN_SPARKLE_API void __cdecl win_sparkle_set_preferred_locale( const char *country_code );
+
+/**
     Sets application build version number.
 
     This is the internal version number that is not normally shown to the user.

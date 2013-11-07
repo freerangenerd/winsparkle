@@ -25,6 +25,7 @@
 
 #include "appcast.h"
 #include "error.h"
+#include "settings.h"
 
 #include <expat.h>
 
@@ -45,34 +46,42 @@ namespace
 #define NS_SEP          '#'
 #define NS_SPARKLE_NAME(name) NS_SPARKLE "#" name
 
-#define NODE_CHANNEL    "channel"
-#define NODE_ITEM       "item"
-#define NODE_RELNOTES   NS_SPARKLE_NAME("releaseNotesLink")
-#define NODE_TITLE "title"
-#define NODE_DESCRIPTION "description"
-#define NODE_ENCLOSURE  "enclosure"
-#define ATTR_URL        "url"
-#define ATTR_VERSION    NS_SPARKLE_NAME("version")
-#define ATTR_SHORTVERSION NS_SPARKLE_NAME("shortVersionString")
+#define NODE_CHANNEL		"channel"
+#define NODE_ITEM			"item"
+#define NODE_RELNOTES		NS_SPARKLE_NAME("releaseNotesLink")
+#define NODE_TITLE			"title"
+#define NODE_DESCRIPTION	"description"
+#define NODE_ENCLOSURE		"enclosure"
+#define ATTR_URL			"url"
+#define ATTR_VERSION		NS_SPARKLE_NAME("version")
+#define ATTR_SHORTVERSION	NS_SPARKLE_NAME("shortVersionString")
+
+	// In Sparkle for Mac xml:lang is used to specify a language for a releaseNotesLink
+	// Unfortunately, a known bug in expat causes it to choke on that attribute
+	// So instead we will just use "lang"
+#define ATTR_LOCALE			"lang"
+#define ATTR_PAID_UPDATE	"paidUpdate"
 
 
 // context data for the parser
 struct ContextData
 {
     ContextData(Appcast& a, XML_Parser& p)
-        : appcast(a),
+        : appcast(&a),
           parser(p),
-          in_channel(0), in_item(0), in_relnotes(0), in_title(0), in_description(0)
+          in_channel(0), in_item(0), in_relnotes(0), in_title(0), in_description(0), in_relnotesPreferred(0), itemsReceived(0)
     {}
 
     // appcast we're parsing into
-    Appcast& appcast;
+    Appcast *appcast;
 
     // the parser we're using
     XML_Parser& parser;
 
     // is inside <channel>, <item> or <sparkle:releaseNotesLink>, <title>, or <description> respectively?
-    int in_channel, in_item, in_relnotes, in_title, in_description;
+    int in_channel, in_item, in_relnotes, in_title, in_description, in_relnotesPreferred;
+	int itemsReceived;
+	std::string preferredReleaseNotes;
 };
 
 
@@ -86,13 +95,55 @@ void XMLCALL OnStartElement(void *data, const char *name, const char **attrs)
     }
     else if ( ctxt.in_channel && strcmp(name, NODE_ITEM) == 0 )
     {
+		ctxt.itemsReceived++;
+
+		if (ctxt.itemsReceived > 1)
+		{
+			if (!ctxt.preferredReleaseNotes.empty()) {
+				ctxt.appcast->ReleaseNotesURL = ctxt.preferredReleaseNotes;
+			}
+			ctxt.preferredReleaseNotes = "";
+			ctxt.appcast->Child = new struct Appcast();
+			ctxt.appcast->Child->Parent = ctxt.appcast;
+			ctxt.appcast = ctxt.appcast->Child;
+		}
         ctxt.in_item++;
     }
     else if ( ctxt.in_item )
     {
         if ( strcmp(name, NODE_RELNOTES) == 0 )
         {
-            ctxt.in_relnotes++;
+			bool hasLocale = false;
+
+			ctxt.appcast->ReleaseNotesURL = "";
+			for ( int i = 0; attrs[i]; i += 2 )
+			{
+				const char *name = attrs[i];
+				const char *value = attrs[i+1];
+
+				if (strcmp(name, ATTR_LOCALE) == 0)
+				{
+					if (strlen(value) == 2)
+					{
+						char locale[3];
+						locale[0] = tolower(value[0]);
+						locale[1] = tolower(value[1]);
+						locale[2] = 0;
+						
+						if (Settings::GetPreferredLocale() == locale)
+						{
+							ctxt.preferredReleaseNotes = "";
+							ctxt.in_relnotesPreferred++;
+						}
+						hasLocale = true;
+					}
+				}
+			}
+
+			if (!hasLocale && ctxt.preferredReleaseNotes.empty()) {
+				ctxt.in_relnotesPreferred++;
+			}
+			ctxt.in_relnotes++;
         }
         else if ( strcmp(name, NODE_TITLE) == 0 )
         {
@@ -109,12 +160,20 @@ void XMLCALL OnStartElement(void *data, const char *name, const char **attrs)
                 const char *name = attrs[i];
                 const char *value = attrs[i+1];
 
-                if ( strcmp(name, ATTR_URL) == 0 )
-                    ctxt.appcast.DownloadURL = value;
-                else if ( strcmp(name, ATTR_VERSION) == 0 )
-                    ctxt.appcast.Version = value;
-                else if ( strcmp(name, ATTR_SHORTVERSION) == 0 )
-                    ctxt.appcast.ShortVersionString = value;
+                if ( strcmp(name, ATTR_URL) == 0 ) {
+                    ctxt.appcast->DownloadURL = value;
+				}
+                else if ( strcmp(name, ATTR_VERSION) == 0 ) {
+                    ctxt.appcast->Version = value;
+				}
+                else if ( strcmp(name, ATTR_SHORTVERSION) == 0 ) {
+                    ctxt.appcast->ShortVersionString = value;
+				}
+				else if ( strcmp(name, ATTR_PAID_UPDATE) == 0 )
+				{
+					ctxt.appcast->IsPaidUpdate = true;
+					ctxt.appcast->DownloadURL = value;
+				}
             }
         }
     }
@@ -128,6 +187,7 @@ void XMLCALL OnEndElement(void *data, const char *name)
     if ( ctxt.in_item && strcmp(name, NODE_RELNOTES) == 0 )
     {
         ctxt.in_relnotes--;
+		ctxt.in_relnotesPreferred = 0;
     }
     else if ( ctxt.in_item && strcmp(name, NODE_TITLE) == 0 )
     {
@@ -139,9 +199,7 @@ void XMLCALL OnEndElement(void *data, const char *name)
     }
     else if ( ctxt.in_channel && strcmp(name, NODE_ITEM) == 0 )
     {
-        // One <item> in the channel is enough to get the information we
-        // need, stop parsing now that we processed it.
-        XML_StopParser(ctxt.parser, XML_TRUE);
+ 		ctxt.in_item--;
     }
     else if ( strcmp(name, NODE_CHANNEL) == 0 )
     {
@@ -155,11 +213,16 @@ void XMLCALL OnText(void *data, const char *s, int len)
     ContextData& ctxt = *static_cast<ContextData*>(data);
 
     if ( ctxt.in_relnotes )
-        ctxt.appcast.ReleaseNotesURL.append(s, len);
+	{
+		if (ctxt.in_relnotesPreferred) {
+			ctxt.preferredReleaseNotes.append(s, len);
+		}
+        ctxt.appcast->ReleaseNotesURL.append(s, len);
+	}
     else if ( ctxt.in_title )
-        ctxt.appcast.Title.append(s, len);
+        ctxt.appcast->Title.append(s, len);
     else if ( ctxt.in_description )
-        ctxt.appcast.Description.append(s, len);
+        ctxt.appcast->Description.append(s, len);
 }
 
 } // anonymous namespace
@@ -190,6 +253,12 @@ void Appcast::Load(const std::string& xml)
         XML_ParserFree(p);
         throw std::runtime_error(msg);
     }
+	else
+	{
+		if (!ctxt.preferredReleaseNotes.empty()) {
+			ctxt.appcast->ReleaseNotesURL = ctxt.preferredReleaseNotes;
+		}
+	}
 
     XML_ParserFree(p);
 }

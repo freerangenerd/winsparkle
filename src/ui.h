@@ -73,6 +73,13 @@ public:
      */
     static void NotifyUpdateError();
 
+	/**
+        Notifies the UI that a new paid version is available.
+
+        If the UI thread isn't running yet, it will be launched.
+     */
+	static void NotifyPaidUpdateAvailable(const Appcast& info);
+
     /**
         Notifies the UI that a new version is available.
 

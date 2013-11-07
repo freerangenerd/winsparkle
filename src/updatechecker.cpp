@@ -232,7 +232,7 @@ void UpdateChecker::Run()
         StringDownloadSink appcast_xml;
         DownloadFile(url, &appcast_xml, GetAppcastDownloadFlags());
 
-        Appcast appcast;
+        Appcast appcast, *appcastP = &appcast;
         appcast.Load(appcast_xml.data);
 
         Settings::WriteConfigValue("LastCheckTime", time(NULL));
@@ -251,11 +251,39 @@ void UpdateChecker::Run()
         // Check if the user opted to ignore this particular version.
         if ( ShouldSkipUpdate(appcast) )
         {
-            UI::NotifyNoUpdates();
-            return;
+			// if this is a paid update, check for a previous update
+			// the assumption is that will be a free update
+			if (appcast.IsPaidUpdate && appcast.Child)
+			{
+				// Check if our version is out of date.
+				if ( CompareVersions(currentVersion, appcast.Child->Version) >= 0 )
+				{
+					// The same or newer version is already installed.
+					UI::NotifyNoUpdates();
+					return;
+				}
+
+				if ( ShouldSkipUpdate(*(appcast.Child)) )
+				{
+					UI::NotifyNoUpdates();
+					return;
+				}
+				
+				appcastP = appcast.Child;
+			}
+			else
+			{
+				UI::NotifyNoUpdates();
+				return;
+			}
         }
 
-        UI::NotifyUpdateAvailable(appcast);
+		if ( appcastP->IsPaidUpdate ) {
+			UI::NotifyPaidUpdateAvailable(*appcastP);
+		}
+		else {
+			UI::NotifyUpdateAvailable(*appcastP);
+		}
     }
     catch ( ... )
     {
@@ -267,14 +295,18 @@ void UpdateChecker::Run()
 bool UpdateChecker::ShouldSkipUpdate(const Appcast& appcast) const
 {
     std::string toSkip;
-    if ( Settings::ReadConfigValue("SkipThisVersion", toSkip) )
-    {
-        return toSkip == appcast.Version;
-    }
-    else
-    {
-        return false;
-    }
+
+	if (appcast.IsPaidUpdate)
+	{
+		if ( Settings::ReadConfigValue("SkipThisPaidVersion", toSkip) ) {
+			return toSkip == appcast.Version;
+		}
+	}
+	else if ( Settings::ReadConfigValue("SkipThisVersion", toSkip) ) {
+		return toSkip == appcast.Version;
+	}
+
+    return false;
 }
 
 

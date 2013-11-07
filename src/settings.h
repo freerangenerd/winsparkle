@@ -110,6 +110,15 @@ public:
         return ms_registryPath;
     }
 
+	/// Return the preferred locale country code
+	static std::string GetPreferredLocale()
+	{
+        CriticalSectionLocker lock(ms_csVars);
+        if ( ms_preferredLocale.empty() )
+            ms_preferredLocale ="EN";
+        return ms_preferredLocale;
+	}
+
     //@}
 
     /**
@@ -161,6 +170,24 @@ public:
         CriticalSectionLocker lock(ms_csVars);
         ms_registryPath = path;
     }
+
+	/// Set the preferred locale country code
+	static void SetPreferredLocale(const char *countryCode)
+	{
+		int length = strlen(countryCode);
+
+		if (length == 2)
+		{
+			char locale[3];
+
+			locale[0] = tolower(countryCode[0]);
+			locale[1] = tolower(countryCode[1]);
+			locale[2] = 0; 
+
+			CriticalSectionLocker lock(ms_csVars);
+			ms_preferredLocale = locale;
+		}
+	}
     //@}
 
 
@@ -238,6 +265,7 @@ private:
     static std::wstring ms_appName;
     static std::wstring ms_appVersion;
     static std::wstring ms_appBuildVersion;
+	static std::string	ms_preferredLocale;
 };
 
 } // namespace winsparkle

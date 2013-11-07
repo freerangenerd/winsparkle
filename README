@@ -10,6 +10,42 @@ updates format (appcasts) and having very similar user interface.
 See http://winsparkle.org for more information about WinSparkle and
 documentation on how to use it.
 
+ Enhancements In This Fork
+---------------------------
+
+This fork of WinSparkle contains the following enhancements:
+
+1. Added a callback win_sparkle_localized_string_callback_t that allows the
+host to localize strings used in the UI class. This does not inhibit using
+the wxwidgets localization paradigm, but provides an alternative if your
+application has its own localization system you would like to use.
+
+When each string is used, if the host has set up this callback, the
+host will be passed a char * to the UTF-8 string WinSparkle wants to
+display. The application can simply return the string or map it to
+a localized string and return that.
+
+2. Added a configuration call: win_sparkle_set_preferred_locale.
+This allows the host to specify a preferred locale for the release notes
+to display to the user.  
+
+The Appcast class has been updated to handle selecting release notes for
+the preferred locale. EN (English) is the default locale. If a
+<sparkle:releaseNotesLink> tag is found with a lang attribute matching
+the preferred locale, the release notes displayed will be drawn from the
+url value specified for that tag.
+
+3. Support for special handling of paid updates has been added.
+
+An item specified in the appcast can be marked as a paid update by
+specifying a paidUpdate attribute whose value is the url for a web
+page to load in the user's default web browser, instead an an url
+attribute for an executable to download. The UI will tell the user
+a paid upgrade is available and instead of an Install button a Learn More
+button is presented. A paid update item can also display release notes.
+A user may elect to Skip This Version for a paid update. If the user skips
+the paid update and a free update is available, the next time WinSparkle
+checks for an update it will display the free update available for installation.
 
  Using prebuilt binaries
 -------------------------
